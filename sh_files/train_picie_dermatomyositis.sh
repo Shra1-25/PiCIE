@@ -1,11 +1,11 @@
 K_train=2
 K_test=2
-bsize=256
-num_epoch=10
+bsize=64
+num_epoch=50
 KM_INIT=20
 KM_NUM=1
 KM_ITER=20
-SEED=1
+SEED=65967
 LR=1e-4
 
 mkdir -p results/picie/train/${SEED}

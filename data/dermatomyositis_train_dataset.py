@@ -9,10 +9,11 @@ import numpy as np
 from PIL import Image, ImageFilter
 from data.custom_transforms import *
 from sklearn.model_selection import train_test_split
+from numpy import asarray
 
 
 class TrainDermatomyositis(data.Dataset):
-    def __init__(self, root, labeldir, mode, split='train', res1=320, res2=640, inv_list=[], eqv_list=[], scale=(0.5, 1)):
+    def __init__(self, root, labeldir, mode, dataset='dermatomyositis', split='train', res1=320, res2=640, inv_list=[], eqv_list=[], scale=(0.5, 1)):
         self.root  = root
         self.split = split
         self.res1  = res1
@@ -26,15 +27,28 @@ class TrainDermatomyositis(data.Dataset):
         self.inv_list = inv_list
         self.eqv_list = eqv_list
         self.labeldir = labeldir
+        self.dataset = dataset
 
-        self.imgpath = self.root + 'tile_image/'
-        self.img_list = os.listdir(self.imgpath) 
-        self.label_path = self.root + 'tile_label/'# self.root+'tile_label/'+'_'.join(impath.split('_')[:-2])+'_mask_' + impath.split('_')[-1]
-        self.full_list = [(self.imgpath + '_'.join(_.split('_')[:-2]) + '_data_' + _.split('_')[-1], self.label_path + '_'.join(_.split('_')[:-2]) + '_mask_' + _.split('_')[-1]) for _ in self.img_list]
-        self.train_list, self.test_list = train_test_split(self.full_list, test_size=0.2, random_state=42)
-        self.train_list, self.val_list =  train_test_split(self.train_list, test_size=0.125, random_state=43)
-
-
+        if self.dataset=='dermatomyositis':
+            self.imgpath = self.root + 'tile_image/'
+            self.img_list = os.listdir(self.imgpath) 
+            self.label_path = self.root + 'tile_label/'# self.root+'tile_label/'+'_'.join(impath.split('_')[:-2])+'_mask_' + impath.split('_')[-1]
+            self.full_list = [(self.imgpath + '_'.join(_.split('_')[:-2]) + '_data_' + _.split('_')[-1], self.label_path + '_'.join(_.split('_')[:-2]) + '_mask_' + _.split('_')[-1]) for _ in self.img_list]
+            self.train_list, self.test_list = train_test_split(self.full_list, test_size=0.25, random_state=42)
+            self.train_list, self.train_val_list =  train_test_split(self.train_list, test_size=0.125, random_state=43)
+        elif self.dataset=='dermofit':
+            self.imgpath = self.root + 'Dermofit/imgs/'
+            self.img_list = os.listdir(self.imgpath) 
+            self.label_path = self.root + 'Dermofit/masks/'# self.root+'tile_label/'+'_'.join(impath.split('_')[:-2])+'_mask_' + impath.split('_')[-1]
+            self.full_list = [(self.imgpath + _, self.label_path + _.split('.')[0] + 'mask.png') for _ in self.img_list]
+            self.train_list, self.test_list = train_test_split(self.full_list, test_size=0.25, random_state=42)
+            self.train_list, self.train_val_list =  train_test_split(self.train_list, test_size=0.125, random_state=43)
+        elif self.dataset=='isic':
+            self.root = self.root + 'ISIC/'
+            self.train_list = [(self.root + 'train/imgs/' + _, self.root + 'train/masks/' + _.split('.')[0]+'_segmentation.'+_.split('.')[1]) for _ in os.listdir(self.root+'train/imgs/')]
+            self.val_list = [(self.root + 'val/imgs/' + _, self.root + 'val/masks/' + _.split('.')[0]+'_segmentation.'+_.split('.')[1]) for _ in os.listdir(self.root+'val/imgs/')]
+            self.test_list = [(self.root + 'test/imgs/' + _, self.root + 'test/masks/' + _.split('.')[0]+'_segmentation.'+_.split('.')[1]) for _ in os.listdir(self.root+'test/imgs/')]
+        
         # self.imdb = self.load_imdb()
         self.reshuffle() 
 
@@ -47,15 +61,33 @@ class TrainDermatomyositis(data.Dataset):
                     imdb.append(image_path)
 
         return imdb
+    
+    def Rnorm(self, image=None):
+        image[0] = image[0]/np.sqrt(image[0]*image[0] + image[1]*image[1] + image[2]*image[2] + 1e-11)
+        # image[1] = image[1]/np.sqrt(image[0]*image[0] + image[1]*image[1] + image[2]*image[2] + 1e-11)
+        # image[2] = image[2]/np.sqrt(image[0]*image[0] + image[1]*image[1] + image[2]*image[2] + 1e-11)
+        return image
 
     def __getitem__(self, index):
         index = self.shuffled_indices[index]
         ipath = self.train_list[index][0]
-        image = np.float32(np.load(ipath))# Image.open(ipath).convert('RGB')
-        trans_list = [transforms.ToPILImage(), transforms.Grayscale(num_output_channels=3)]
+        if self.dataset=='dermofit' or self.dataset=='isic':
+            image = Image.open(ipath).convert('RGB')
+
+            # DATASET_IMAGE_MEAN = (0.485,0.456, 0.406)
+            # DATASET_IMAGE_STD = (0.229,0.224, 0.225)
+            # image = np.uint8(asarray(image))
+            # trans_list = [transforms.ToTensor(), transforms.Normalize(DATASET_IMAGE_MEAN, DATASET_IMAGE_STD), transforms.ToPILImage(), transforms.Grayscale(num_output_channels=3)]
+            trans_list = [transforms.ToTensor(), transforms.ToPILImage(), transforms.Grayscale(num_output_channels=3)]
+        elif self.dataset=='dermatomyositis':
+            image = np.float32(np.load(ipath))# Image.open(ipath).convert('RGB')
+            trans_list = [transforms.ToPILImage(), transforms.Grayscale(num_output_channels=3)]
+        # print(np.array(image).shape)
         image = transforms.Compose(trans_list)(image)
         image = self.transform_image(index, image)
+        # print(image[0].shape)
         label = self.transform_label(index)
+        # print(label[0].shape, label[1].shape)
         
         return (index, ) + image + label
     
@@ -86,6 +118,8 @@ class TrainDermatomyositis(data.Dataset):
                 image = self.transform_tensor(image)
             else:
                 raise ValueError('View [{}] is an invalid option.'.format(self.view))
+            
+            # image = self.Rnorm(image)
             return (image, )
         elif 'train' in self.mode:
             # Invariance transform. 
@@ -101,6 +135,8 @@ class TrainDermatomyositis(data.Dataset):
             image2 = TF.resize(image2, self.res1, Image.BILINEAR)
             image2 = self.transform_tensor(image2)
 
+            # image1 = self.Rnorm(image1)
+            # image2 = self.Rnorm(image2)
             return (image1, image2)
         else:
             raise ValueError('Mode [{}] is an invalid option.'.format(self.mode))

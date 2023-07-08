@@ -1,18 +1,21 @@
+#!/bin/bash
+
 K_train=2
 K_test=2
-bsize=256
-num_epoch=10
-KM_INIT=20
+bsize=64
+num_epoch=50
+KM_INIT=32 #15 # 26
 KM_NUM=1
-KM_ITER=20
-SEED=1
+KM_ITER=32 #15 # 26
+SEED=3098592
 LR=1e-4
+DATASET='isic'
 
-mkdir -p results/picie/train/${SEED}
+mkdir -p results/picie/train/${DATASET}/${SEED}
 
 python train_picie.py \
 --data_root datasets/ \
---save_root results/picie/train/${SEED} \
+--save_root results/picie/train/${DATASET}/${SEED} \
 --device 'cuda' \
 --pretrain \
 --repeats 1 \
@@ -26,4 +29,5 @@ python train_picie.py \
 --batch_size_cluster ${bsize} \
 --num_epoch ${num_epoch} \
 --res 480 --res1 480 --res2 480 \
---augment --jitter --blur --grey --equiv --random_crop --h_flip 
+--dataset ${DATASET} \
+--augment --jitter --blur --grey --equiv --random_crop --h_flip

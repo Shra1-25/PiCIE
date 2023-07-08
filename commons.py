@@ -6,6 +6,7 @@ import torch.nn as nn
 from sklearn.utils.linear_assignment_ import linear_assignment
 from modules import fpn 
 from utils import *
+import torch.optim.lr_scheduler as lr_scheduler
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -23,7 +24,7 @@ def get_model_and_optimizer(args, logger):
     if args.optim_type == 'SGD':
         logger.info('SGD optimizer is used.')
         optimizer = torch.optim.SGD(filter(lambda x: x.requires_grad, model.module.parameters()), lr=args.lr, \
-                                    momentum=args.momentum, weight_decay=args.weight_decay)
+                                    momentum=args.momentum, weight_decay=args.weight_decay, nesterov=False)
     elif args.optim_type == 'Adam':
         logger.info('Adam optimizer is used.')
         optimizer = torch.optim.Adam(filter(lambda x: x.requires_grad, model.module.parameters()), lr=args.lr)
@@ -45,7 +46,8 @@ def get_model_and_optimizer(args, logger):
         else:
             logger.info('No checkpoint found at [{}].\nStart from beginning...\n'.format(load_path))
     
-    return model, optimizer, classifier
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.502)
+    return model, optimizer, classifier, scheduler
 
 
 
@@ -67,6 +69,7 @@ def run_mini_batch_kmeans(args, logger, dataloader, model, view):
     model.train()
     torch.cuda.empty_cache()
     with torch.no_grad():
+        featslist=[]
         for i_batch, (indice, image) in enumerate(dataloader):
             
             # 1. Compute initial centroids from the first few batches. 
@@ -207,11 +210,18 @@ def evaluate(args, logger, dataloader, classifier, model):
                 logger.info('Batch feature size : {}\n'.format(list(feats.shape)))
 
             probs = classifier(feats)
+            if torch.sum(torch.isnan(probs)):
+                import pdb; pdb.set_trace()
+
             probs = F.interpolate(probs, label.shape[-2:], mode='bilinear', align_corners=False)
+            # print(probs.shape, probs.topk(1, dim=1)[1].shape, label.shape)
             preds = probs.topk(1, dim=1)[1].view(B, -1).cpu().numpy()
             label = label.view(B, -1).cpu().numpy()
+            
+            print(np.sum(preds),np.sum(label))
 
             histogram += scores(label, preds, args.K_test)
+            
             
             if i%20==0:
                 logger.info('{}/{}'.format(i, len(dataloader)))

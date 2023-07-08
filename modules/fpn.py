@@ -19,7 +19,7 @@ class PanopticFPN(nn.Module):
 class FPNDecoder(nn.Module):
     def __init__(self, args):
         super(FPNDecoder, self).__init__()
-        if args.arch == 'resnet18':
+        if args.arch == 'resnet18' or args.arch == 'resnet34':
             mfactor = 1
             out_dim = 128 
         else:

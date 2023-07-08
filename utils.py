@@ -107,6 +107,7 @@ def scores(label_trues, label_preds, n_class):
 
 
 def get_result_metrics(histogram):
+    print(histogram)
     tp = np.diag(histogram)
     fp = np.sum(histogram, 0) - tp
     fn = np.sum(histogram, 1) - tp 
@@ -114,7 +115,9 @@ def get_result_metrics(histogram):
     iou = tp / (tp + fp + fn)
     prc = tp / (tp + fn) 
     opc = np.sum(tp) / np.sum(histogram)
-
+    # if np.isnan(np.nanmean(iou)):
+        # iou = np.array([0]) 
+        # import pdb; pdb.set_trace()
     result = {"iou": iou,
               "mean_iou": np.nanmean(iou),
               "precision_per_class (per class accuracy)": prc,
@@ -318,16 +321,16 @@ def get_dataset(args, mode, inv_list=[], eqv_list=[]):
                                      label_mode=args.label_mode, long_image=args.long_image)
     else:
         if mode == 'train':
-            dataset = TrainDermatomyositis(args.data_root, labeldir=args.save_model_path, res1=args.res1, res2=args.res2, 
+            dataset = TrainDermatomyositis(args.data_root, labeldir=args.save_model_path, dataset=args.dataset, res1=args.res1, res2=args.res2, 
                                       split='train', mode='compute', inv_list=inv_list, eqv_list=eqv_list, scale=(args.min_scale, 1))
         elif mode == 'train_val':
-            dataset = EvalDermatomyositis(args.data_root, res=args.res, split='val', mode='test',
+            dataset = EvalDermatomyositis(args.data_root, dataset=args.dataset, res=args.res, split='val', mode='train_val',
                                      label_mode=args.label_mode, long_image=args.long_image)
         elif mode == 'eval_val':
-            dataset = EvalDermatomyositis(args.data_root, res=args.res, split=args.val_type,
-                                     mode='test', label_mode=args.label_mode, long_image=args.long_image, label=False)
+            dataset = EvalDermatomyositis(args.data_root, dataset=args.dataset, res=args.res, split=args.val_type,
+                                     mode='eval_val', label_mode=args.label_mode, long_image=args.long_image, label=False)
         elif mode == 'eval_test':
-            dataset = EvalDermatomyositis(args.data_root, res=args.res, split='val', mode='test',
+            dataset = EvalDermatomyositis(args.data_root, dataset=args.dataset, res=args.res, split='val', mode='eval_test',
                                      label_mode=args.label_mode, long_image=args.long_image)
     
     # else:

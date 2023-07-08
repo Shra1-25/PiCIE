@@ -20,19 +20,20 @@ def parse_arguments():
     parser.add_argument('--seed', type=int, default=2021, help='Random seed for reproducability.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of workers.')
     parser.add_argument('--restart', action='store_true', default=False)
-    parser.add_argument('--num_epoch', type=int, default=10) 
+    parser.add_argument('--num_epoch', type=int, default=50) 
+    parser.add_argument('--start_epoch', type=int, default=0) 
     parser.add_argument('--repeats', type=int, default=0)  
     parser.add_argument('--device', type=str, default='cuda')
 
     # Train. 
-    parser.add_argument('--arch', type=str, default='resnet18')
+    parser.add_argument('--arch', type=str, default='resnet34')
     parser.add_argument('--pretrain', action='store_true', default=False)
     parser.add_argument('--res', type=int, default=320, help='Input size.')
     parser.add_argument('--res1', type=int, default=320, help='Input size scale from.')
     parser.add_argument('--res2', type=int, default=640, help='Input size scale to.')
-    parser.add_argument('--batch_size_cluster', type=int, default=256)
-    parser.add_argument('--batch_size_train', type=int, default=128)
-    parser.add_argument('--batch_size_test', type=int, default=128)
+    parser.add_argument('--batch_size_cluster', type=int, default=64)
+    parser.add_argument('--batch_size_train', type=int, default=64)
+    parser.add_argument('--batch_size_test', type=int, default=64)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--momentum', type=float, default=0.9)
@@ -66,9 +67,9 @@ def parse_arguments():
     parser.add_argument('--val_type', type=str, default='train')
     parser.add_argument('--version', type=int, default=7)
     parser.add_argument('--fullcoco', action='store_true', default=False)
-
+    parser.add_argument('--dataset', type=str, default='dermatomyositis')
     # Eval-only
-    parser.add_argument('--eval_only', action='store_true', default=False)
+    parser.add_argument('--eval_only', action='store_true')
     parser.add_argument('--eval_path', type=str)
 
     # Cityscapes-specific.
@@ -82,7 +83,7 @@ def parse_arguments():
 
 
 
-def train(args, logger, dataloader, model, classifier1, classifier2, criterion1, criterion2, optimizer, epoch):
+def train(args, logger, dataloader, model, classifier1, classifier2, criterion1, criterion2, optimizer, epoch, scheduler):
     losses = AverageMeter()
     losses_mse = AverageMeter()
     losses_cet = AverageMeter()
@@ -162,6 +163,7 @@ def train(args, logger, dataloader, model, classifier1, classifier2, criterion1,
         if (i % 200) == 0:
             logger.info('{0} / {1}\t'.format(i, len(dataloader)))
 
+    scheduler.step()
     return losses.avg, losses_cet.avg, losses_cet_within.avg, losses_cet_across.avg, losses_mse.avg
 
 
@@ -180,9 +182,10 @@ def main(args, logger):
 
     # Start time.
     t_start = t.time()
-
+    
+    # args.pretrain=False
     # Get model and optimizer.
-    model, optimizer, classifier1 = get_model_and_optimizer(args, logger)
+    model, optimizer, classifier1, scheduler = get_model_and_optimizer(args, logger)
 
     # New trainset inside for-loop.
     inv_list, eqv_list = get_transform_params(args)
@@ -203,10 +206,12 @@ def main(args, logger):
                                              pin_memory=True,
                                              collate_fn=collate_eval,
                                              worker_init_fn=worker_init_fn(args.seed))
+    print('Len of train dataset: ', len(trainset), 'Len of train_val dataset:', len(testset))
     # Before train.
     _, _ = evaluate(args, logger, testloader, classifier1, model)
     if not args.eval_only:
         # Train start.
+        
         for epoch in range(args.start_epoch, args.num_epoch):
             # Assign probs. 
             
@@ -260,9 +265,10 @@ def main(args, logger):
                                                             worker_init_fn=worker_init_fn(args.seed))
 
             logger.info('Start training ...')
-            train_loss, train_cet, cet_within, cet_across, train_mse = train(args, logger, trainloader_loop, model, classifier1, classifier2, criterion1, criterion2, optimizer, epoch) 
-            acc1, res1 = evaluate(args, logger, testloader, classifier1, model)
-            acc2, res2 = evaluate(args, logger, testloader, classifier2, model)
+            with torch.autograd.detect_anomaly():
+                train_loss, train_cet, cet_within, cet_across, train_mse = train(args, logger, trainloader_loop, model, classifier1, classifier2, criterion1, criterion2, optimizer, epoch, scheduler) 
+                acc1, res1 = evaluate(args, logger, testloader, classifier1, model)
+                acc2, res2 = evaluate(args, logger, testloader, classifier2, model)
             
             logger.info('============== Epoch [{}] =============='.format(epoch))
             logger.info('  Time: [{}]'.format(get_datetime(int(t.time())-int(t1))))
@@ -312,27 +318,29 @@ def main(args, logger):
                                                 collate_fn=collate_eval,
                                                 worker_init_fn=worker_init_fn(args.seed))
 
+        print('Len of eval_val dataset: ', len(trainset), 'Len of eval_test dataset:', len(testset))
         # Evaluate with fresh clusters.
         acc_list_new = []  
         res_list_new = []                 
         logger.info('Start computing centroids.')
-        if args.repeats > 0:
-            for _ in range(args.repeats):
-                t1 = t.time()
-                centroids1, kmloss1 = run_mini_batch_kmeans(args, logger, trainloader, model, view=-1)
-                logger.info('-Centroids ready. [Loss: {:.5f}/ Time: {}]\n'.format(kmloss1, get_datetime(int(t.time())-int(t1))))
-                
-                classifier1 = initialize_classifier(args)
-                classifier1.module.weight.data = centroids1.unsqueeze(-1).unsqueeze(-1)
-                freeze_all(classifier1)
-                
+        with torch.autograd.detect_anomaly():
+            if args.repeats > 0:
+                for _ in range(args.repeats):
+                    t1 = t.time()
+                    centroids1, kmloss1 = run_mini_batch_kmeans(args, logger, trainloader, model, view=-1)
+                    logger.info('-Centroids ready. [Loss: {:.5f}/ Time: {}]\n'.format(kmloss1, get_datetime(int(t.time())-int(t1))))
+                    
+                    classifier1 = initialize_classifier(args)
+                    classifier1.module.weight.data = centroids1.unsqueeze(-1).unsqueeze(-1)
+                    freeze_all(classifier1)
+                    
+                    acc_new, res_new = evaluate(args, logger, testloader, classifier1, model)
+                    acc_list_new.append(acc_new)
+                    res_list_new.append(res_new)
+            else:
                 acc_new, res_new = evaluate(args, logger, testloader, classifier1, model)
                 acc_list_new.append(acc_new)
                 res_list_new.append(res_new)
-        else:
-            acc_new, res_new = evaluate(args, logger, testloader, classifier1, model)
-            acc_list_new.append(acc_new)
-            res_list_new.append(res_new)
 
         logger.info('Average overall pixel accuracy [NEW] : {:.3f} +/- {:.3f}.'.format(np.mean(acc_list_new), np.std(acc_list_new)))
         logger.info('Average mIoU [NEW] : {:.3f} +/- {:.3f}. '.format(np.mean([res['mean_iou'] for res in res_list_new]), 
@@ -342,7 +350,6 @@ def main(args, logger):
         
 if __name__=='__main__':
     args = parse_arguments()
-
     # Setup the path to save.
     if not args.pretrain:
         args.save_root += '/scratch'
@@ -357,7 +364,7 @@ if __name__=='__main__':
 
     args.save_model_path = os.path.join(args.save_root, args.comment, 'K_train={}_{}'.format(args.K_train, args.metric_train))
     args.save_eval_path  = os.path.join(args.save_model_path, 'K_test={}_{}'.format(args.K_test, args.metric_test))
-    
+
     if not os.path.exists(args.save_eval_path):
         os.makedirs(args.save_eval_path)
 

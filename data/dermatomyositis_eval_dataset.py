@@ -38,7 +38,7 @@ class GaussianBlur(object):
 
 
 class EvalDermatomyositis(data.Dataset):
-    def __init__(self, root, split, mode, res=128, transform_list=[], label=True, \
+    def __init__(self, root, split, mode, dataset='dermatomyositis', res=128, transform_list=[], label=True, \
                  label_mode='gtFine', long_image=False):
         self.root  = root 
         self.split = split
@@ -50,21 +50,41 @@ class EvalDermatomyositis(data.Dataset):
 
         self.label_mode = label_mode  
         self.long_image = long_image 
+        self.dataset = dataset
         
         # Create label mapper.
         assert label_mode in ['gtFine', 'gtCoarse'], '[{}] is invalid label mode.'.format(label_mode)
         LABEL_DICT = FINE_DICT if label_mode == 'gtFine' else COARSE_DICT
         self.cityscape_labelmap = np.vectorize(lambda x: LABEL_DICT[x])
-
-        # For test-time augmentation / robustness test. 
+        
         self.transform_list = transform_list
-        self.imgpath = self.root + 'tile_image/'
-        self.img_list = os.listdir(self.imgpath) 
-        self.label_path = self.root + 'tile_label/'# self.root+'tile_label/'+'_'.join(impath.split('_')[:-2])+'_mask_' + impath.split('_')[-1]
-        self.full_list = [(self.imgpath + '_'.join(_.split('_')[:-2]) + '_data_' + _.split('_')[-1], self.label_path + '_'.join(_.split('_')[:-2]) + '_mask_' + _.split('_')[-1]) for _ in self.img_list]
-        self.train_list, self.test_list = train_test_split(self.full_list, test_size=0.2, random_state=42)
-        self.train_list, self.val_list =  train_test_split(self.train_list, test_size=0.125, random_state=43)
+        
+        # For test-time augmentation / robustness test. 
+        if self.dataset=='dermatomyositis':
+            self.imgpath = self.root + 'tile_image/'
+            self.img_list = os.listdir(self.imgpath) 
+            self.label_path = self.root + 'tile_label/'# self.root+'tile_label/'+'_'.join(impath.split('_')[:-2])+'_mask_' + impath.split('_')[-1]
+            self.full_list = [(self.imgpath + '_'.join(_.split('_')[:-2]) + '_data_' + _.split('_')[-1], self.label_path + '_'.join(_.split('_')[:-2]) + '_mask_' + _.split('_')[-1]) for _ in self.img_list]
+            self.train_list, self.test_list = train_test_split(self.full_list, test_size=0.25, random_state=42)
+            self.train_list, self.train_val_list =  train_test_split(self.train_list, test_size=0.125, random_state=43)
+            self.eval_val_list, self.eval_test_list = train_test_split(self.test_list, test_size=0.5, random_state=44)
 
+        if self.dataset=='dermofit':
+            self.imgpath = self.root + 'Dermofit/imgs/'
+            self.img_list = os.listdir(self.imgpath) 
+            self.label_path = self.root + 'Dermofit/masks/'# self.root+'tile_label/'+'_'.join(impath.split('_')[:-2])+'_mask_' + impath.split('_')[-1]
+            self.full_list = [(self.imgpath + _, self.label_path + _.split('.')[0] + 'mask.png') for _ in self.img_list]
+            self.train_list, self.test_list = train_test_split(self.full_list, test_size=0.25, random_state=42)
+            self.train_list, self.train_val_list =  train_test_split(self.train_list, test_size=0.125, random_state=43)
+            self.eval_val_list, self.eval_test_list = train_test_split(self.test_list, test_size=0.5, random_state=44)
+
+        if self.dataset=='isic':
+            self.root = self.root + 'ISIC/'
+            self.train_list = [(self.root + 'train/imgs/' + _, self.root + 'train/masks/' + _.split('.')[0]+'_segmentation.png') for _ in os.listdir(self.root+'train/imgs/')]
+            self.train_val_list = [(self.root + 'val/imgs/' + _, self.root + 'val/masks/' + _.split('.')[0]+'_segmentation.png') for _ in os.listdir(self.root+'val/imgs/')]
+            self.test_list = [(self.root + 'test/imgs/' + _, self.root + 'test/masks/' + _.split('.')[0]+'_segmentation.png') for _ in os.listdir(self.root+'test/imgs/')]
+            self.eval_val_list, self.eval_test_list = train_test_split(self.test_list, test_size=0.5, random_state=44)
+        
         # self.imdb = self.load_imdb()
         
     def load_imdb(self):
@@ -96,20 +116,38 @@ class EvalDermatomyositis(data.Dataset):
         if self.mode=='train':
             impath = self.train_list[index][0]
             label_path = self.train_list[index][1]
-        elif self.mode=='val':
-            impath = self.val_list[index][0]
-            label_path = self.val_list[index][1]
-        else:
-            impath = self.test_list[index][0]
-            label_path = self.test_list[index][1]
+        elif self.mode=='train_val':
+            impath = self.train_val_list[index][0]
+            label_path = self.train_val_list[index][1]
+        elif self.mode=='eval_val':
+            impath = self.eval_val_list[index][0]
+            label_path = self.eval_val_list[index][1]
+        elif self.mode=='eval_test':
+            impath = self.eval_test_list[index][0]
+            label_path = self.eval_test_list[index][1]
+
         # import pdb; pdb.set_trace()
-        image = np.load(impath)
-        label = np.load(label_path)/255
+        if self.dataset=='dermatomyositis':
+            image = np.load(impath)
+            label = np.load(label_path)/255
+            return (index,) + self.transform_data(transforms.ToPILImage()(np.float32(image)), transforms.ToPILImage()(np.float32(label)), index)
+        elif self.dataset=='dermofit' or self.dataset=='isic':
+            image = Image.open(impath).convert('RGB')
+            label = Image.open(label_path)
+            trans_list = [transforms.ToTensor(), transforms.ToPILImage()]
+            image = transforms.Compose(trans_list)(image)
+            label = transforms.ToTensor()(label)
+            label = label/255
+            label = transforms.ToPILImage()(label)
+            # print(np.array(image).shape, np.array(label).shape)
+            return (index,) + self.transform_data(image, label, index)
+        
+
         
         # image = Image.open(impath).convert('RGB')
         # label = Image.open(gtpath) if self.label else None 
 
-        return (index,) + self.transform_data(transforms.ToPILImage()(np.float32(image)), transforms.ToPILImage()(np.float32(label)), index)
+        
 
 
     def transform_data(self, image, label, index):
@@ -146,7 +184,7 @@ class EvalDermatomyositis(data.Dataset):
 
 
     def _image_transform(self, image, mode):
-        if self.mode == 'test':
+        if self.mode=='train_val' or self.mode=='eval_val' or self.mode=='eval_test':
             transform = self._get_data_transformation()
 
             return transform(image)
@@ -171,10 +209,12 @@ class EvalDermatomyositis(data.Dataset):
     def __len__(self):
         if self.mode=='train':
             return len(self.train_list)
-        elif self.mode=='val':
-            return len(self.val_list)
-        else:
-            return len(self.test_list)
+        elif self.mode=='train_val':
+            return len(self.train_val_list)
+        elif self.mode=='eval_val':
+            return len(self.eval_val_list)
+        elif self.mode=='eval_test':
+            return len(self.eval_test_list)
         
 
   
