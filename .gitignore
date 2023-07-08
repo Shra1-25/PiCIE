@@ -8,3 +8,4 @@
 *.npy
 *res1=480_res2=480*
 *.__pycache__*
+*.pyc
